@@ -1,26 +1,14 @@
-# == Class: elasticsearch::package
-#
 # This class exists to coordinate all software package management related
 # actions, functionality and logical units in a central place.
-#
-#
-# === Parameters
-#
-# This class does not provide any parameters.
-#
-#
-# === Examples
-#
-# This class may be imported by other classes to use its functionality:
-#   class { 'elasticsearch::package': }
 #
 # It is not intended to be used directly by external resources like node
 # definitions or other modules.
 #
+# @example importing this class by other classes to use its functionality:
+#   class { 'elasticsearch::package': }
 #
-# === Authors
-#
-# * Richard Pijnenburg <mailto:richard.pijnenburg@elasticsearch.com>
+# @author Richard Pijnenburg <richard.pijnenburg@elasticsearch.com>
+# @author Tyler Langlois <tyler.langlois@elastic.co>
 #
 class elasticsearch::package {
 
@@ -37,22 +25,27 @@ class elasticsearch::package {
   # set params: in operation
   if $elasticsearch::ensure == 'present' {
 
+    if $elasticsearch::restart_package_change {
+      Package[$elasticsearch::package_name] ~> Elasticsearch::Service <| |>
+    }
+    Package[$elasticsearch::package_name] ~> Exec['remove_plugin_dir']
+
     # Create directory to place the package file
+    $package_dir = $elasticsearch::package_dir
     exec { 'create_package_dir_elasticsearch':
       cwd     => '/',
       path    => ['/usr/bin', '/bin'],
-      command => "mkdir -p ${elasticsearch::package_dir}",
-      creates => $elasticsearch::package_dir,
+      command => "mkdir -p ${package_dir}",
+      creates => $package_dir,
     }
 
-    file { $elasticsearch::package_dir:
+    file { $package_dir:
       ensure  => 'directory',
       purge   => $elasticsearch::purge_package_dir,
       force   => $elasticsearch::purge_package_dir,
       backup  => false,
       require => Exec['create_package_dir_elasticsearch'],
     }
-
 
     # Check if we want to install a specific version or not
     if $elasticsearch::version == false {
@@ -77,16 +70,15 @@ class elasticsearch::package {
         default:   { fail("software provider \"${elasticsearch::package_provider}\".") }
       }
 
-      $package_dir = $elasticsearch::package_dir
 
-      $filenameArray = split($elasticsearch::package_url, '/')
-      $basefilename = $filenameArray[-1]
+      $filename_array = split($elasticsearch::package_url, '/')
+      $basefilename = $filename_array[-1]
 
-      $sourceArray = split($elasticsearch::package_url, ':')
-      $protocol_type = $sourceArray[0]
+      $source_array = split($elasticsearch::package_url, ':')
+      $protocol_type = $source_array[0]
 
-      $extArray = split($basefilename, '\.')
-      $ext = $extArray[-1]
+      $ext_array = split($basefilename, '\.')
+      $ext = $ext_array[-1]
 
       $pkg_source = "${package_dir}/${basefilename}"
 
@@ -111,6 +103,8 @@ class elasticsearch::package {
               "http_proxy=${elasticsearch::proxy_url}",
               "https_proxy=${elasticsearch::proxy_url}",
             ]
+          } else {
+            $exec_environment = []
           }
 
           exec { 'download_package_elasticsearch':
@@ -125,7 +119,7 @@ class elasticsearch::package {
         }
         'file': {
 
-          $source_path = $sourceArray[1]
+          $source_path = $source_array[1]
           file { $pkg_source:
             ensure  => file,
             source  => $source_path,
@@ -155,20 +149,28 @@ class elasticsearch::package {
   # Package removal
   } else {
 
-    if ($::operatingsystem == 'OpenSuSE') {
+    if ($::osfamily == 'Suse') {
       Package {
         provider  => 'rpm',
       }
+      $package_ensure = 'absent'
+    } else {
+      $package_ensure = 'purged'
     }
-    $package_ensure = 'purged'
 
   }
 
   if ($elasticsearch::package_provider == 'package') {
 
     package { $elasticsearch::package_name:
-      ensure   => $package_ensure,
+      ensure => $package_ensure,
     }
+
+    exec { 'remove_plugin_dir':
+      refreshonly => true,
+      command     => "rm -rf ${elasticsearch::plugindir}",
+    }
+
 
   } else {
     fail("\"${elasticsearch::package_provider}\" is not supported")
